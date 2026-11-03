@@ -1,1 +1,0 @@
-I want the calibration of the headphones to be saved in the browser local storage. And that it is possible to save different configuration of headphones. So I could have one setup for my airpods, one for my bose overears for example. And then I would like to calibrate them and being able to store the calibration in local storage.
