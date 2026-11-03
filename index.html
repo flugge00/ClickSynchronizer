@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f1012" />
+    <meta name="description" content="A metronome that keeps every phone in the band on the same click." />
+    <title>ClickSync</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
+  </head>
+  <body>
+    <div id="flash" class="flash"></div>
+
+    <header class="bar">
+      <h1 class="brand"><img src="./icon.svg" alt="" />ClickSync</h1>
+      <span id="status" class="status" hidden></span>
+      <button id="openSettings" class="icon-btn" aria-label="Settings">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" />
+        </svg>
+      </button>
+    </header>
+
+    <main class="layout">
+      <section id="metro" class="card metro">
+        <div id="beats" class="beats" aria-label="Beats"></div>
+
+        <div class="tempo">
+          <button class="round host-control" data-bpm="-1" aria-label="Slower">−</button>
+          <div class="bpm"><span id="bpm">120</span><small>BPM</small></div>
+          <button class="round host-control" data-bpm="1" aria-label="Faster">+</button>
+        </div>
+        <input id="bpmRange" class="host-control" type="range" min="30" max="300" aria-label="Tempo" />
+
+        <div class="controls">
+          <div class="field">
+            <span class="label">Beats per bar</span>
+            <div class="stepper">
+              <button class="host-control" data-beats="-1" aria-label="Fewer beats">−</button>
+              <span id="beatsPerBar">4</span>
+              <button class="host-control" data-beats="1" aria-label="More beats">+</button>
+            </div>
+          </div>
+          <div class="field">
+            <span class="label">Subdivision</span>
+            <div id="subdivision" class="seg">
+              <button class="host-control" data-sub="1" aria-label="Quarter notes">♩</button>
+              <button class="host-control" data-sub="2" aria-label="Eighth notes">♫</button>
+              <button class="host-control" data-sub="3" aria-label="Triplets">3</button>
+              <button class="host-control" data-sub="4" aria-label="Sixteenth notes">♬</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="tap" class="btn host-control">Tap</button>
+          <button id="play" class="btn primary host-control">Start</button>
+        </div>
+      </section>
+
+      <section id="session" class="card session">
+        <div data-view="solo">
+          <h2>Play together</h2>
+          <p class="muted">Put everyone on the same click. One device controls it, the others listen on their own headphones.</p>
+          <button id="host" class="btn primary wide">Host a session</button>
+          <form id="joinForm" class="join">
+            <input id="code" placeholder="Enter code" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Session code" />
+            <button class="btn">Join</button>
+          </form>
+        </div>
+
+        <div data-view="host" hidden>
+          <div class="session-head">
+            <div>
+              <span class="label">Session code</span>
+              <div id="hostCode" class="code"></div>
+            </div>
+            <button id="share" class="btn">Share link</button>
+          </div>
+          <div id="qr" class="qr"></div>
+          <h3>Players <span id="playerCount" class="muted"></span></h3>
+          <ul id="players" class="players"></ul>
+          <button id="end" class="btn ghost wide">End session</button>
+        </div>
+
+        <div data-view="listener" hidden>
+          <span class="label">Session code</span>
+          <div id="listenCode" class="code"></div>
+          <p class="muted">The host controls the tempo and start/stop. Tap a beat to mute it on this device only.</p>
+          <button id="leave" class="btn ghost wide">Leave session</button>
+        </div>
+
+        <p class="hint">Keep this screen on and use wired headphones for the tightest sync. On iPhone, turn the silent switch off.</p>
+      </section>
+    </main>
+
+    <dialog id="settings">
+      <form method="dialog">
+        <header class="dialog-head">
+          <h2>Settings</h2>
+          <button class="icon-btn" aria-label="Close">✕</button>
+        </header>
+
+        <label class="field">
+          <span class="label">Volume</span>
+          <input id="volume" type="range" min="0" max="1" step="0.01" />
+        </label>
+
+        <div class="field">
+          <span class="label">Sound</span>
+          <div id="sound" class="seg">
+            <button type="button" data-sound="beep">Beep</button>
+            <button type="button" data-sound="wood">Wood</button>
+            <button type="button" data-sound="tick">Tick</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="label">Headphones</span>
+          <div class="profile">
+            <select id="profile" aria-label="Headphone profile"></select>
+            <button type="button" id="addProfile" class="btn">New</button>
+            <button type="button" id="deleteProfile" class="btn">Delete</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="label">Latency offset <output id="latencyOut"></output></span>
+          <input id="latency" type="range" min="-100" max="400" step="1" />
+          <p class="muted small">
+            Plays this device earlier to make up for headphone delay, saved per headphone profile. Bluetooth adds 150–300 ms.
+            <span id="reported"></span>
+          </p>
+          <button type="button" id="tapTest" class="btn wide">Tap along to calibrate</button>
+          <p id="tapResult" class="muted small"></p>
+        </div>
+
+        <label class="check">
+          <input id="flashToggle" type="checkbox" />
+          Flash the screen on every beat
+        </label>
+      </form>
+    </dialog>
+
+    <dialog id="joinDialog">
+      <form id="joinDialogForm" method="dialog">
+        <header class="dialog-head">
+          <h2>Join session</h2>
+          <button type="button" class="icon-btn" data-close aria-label="Close">✕</button>
+        </header>
+        <div id="joinCode" class="code"></div>
+        <label class="field">
+          <span class="label">Your name</span>
+          <input id="joinName" maxlength="20" placeholder="e.g. Anna – trumpet" autocomplete="nickname" />
+        </label>
+        <button class="btn primary wide">Join &amp; enable audio</button>
+      </form>
+    </dialog>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
