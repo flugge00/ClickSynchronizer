@@ -14,8 +14,9 @@
   color-scheme: dark;
 }
 
+/* Theme: follows the system unless data-theme="light" | "dark" is set (Settings). */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme='dark']) {
     --bg: #f3f3f6;
     --surface: #ffffff;
     --surface-2: #ececf0;
@@ -31,8 +32,27 @@
   }
 }
 
+:root[data-theme='light'] {
+  --bg: #f3f3f6;
+  --surface: #ffffff;
+  --surface-2: #ececf0;
+  --line: #dedee4;
+  --text: #141417;
+  --muted: #686973;
+  --accent: #f05f24;
+  --on-accent: #ffffff;
+  --good: #16a36a;
+  --ok: #c48a00;
+  --bad: #dc3b3b;
+  color-scheme: light;
+}
+
 * {
   box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 body {
@@ -196,6 +216,20 @@ input[type='range'] {
   background: var(--surface);
 }
 
+#mute[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+#mute .icon-off,
+#mute[aria-pressed='true'] .icon-on {
+  display: none;
+}
+
+#mute[aria-pressed='true'] .icon-off {
+  display: block;
+}
+
 .status {
   font-size: 0.85rem;
   font-weight: 600;
@@ -203,6 +237,9 @@ input[type='range'] {
   border-radius: 99px;
   background: var(--surface);
   white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .status::before,
@@ -378,12 +415,109 @@ input[type='range'] {
   color: var(--bg);
 }
 
-.readonly .host-control {
-  opacity: 0.4;
+/* Listening: the host is in charge, so hide what can't be used and say so clearly. */
+.metro.readonly {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
-.readonly #play {
-  opacity: 1;
+.readonly .host-control {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.readonly .round {
+  visibility: hidden;
+}
+
+.readonly #bpmRange {
+  display: none;
+}
+
+.listen-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+}
+
+.listen-banner > div {
+  display: grid;
+  gap: 2px;
+}
+
+.listen-banner span:not(.listen-icon) {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.listen-icon {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.listen-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 64px;
+  border-radius: 14px;
+  border: 1px dashed var(--line);
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.listen-state .dot {
+  width: 10px;
+  height: 10px;
+  margin-right: 10px;
+}
+
+.listen-state .dot[data-tone='good'] {
+  background: var(--good);
+}
+
+/* ---------- calibration ---------- */
+
+.calib-run {
+  display: grid;
+  gap: 12px;
+}
+
+.tap-pad {
+  display: grid;
+  place-content: center;
+  gap: 4px;
+  min-height: 150px;
+  border: 2px solid var(--accent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  font-size: 1.15rem;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.tap-pad span {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.tap-pad:active {
+  background: color-mix(in srgb, var(--accent) 35%, var(--surface));
+}
+
+.calib-run progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--accent);
+}
+
+.btn:disabled {
+  opacity: 0.5;
 }
 
 /* ---------- session ---------- */
@@ -487,6 +621,39 @@ input[type='range'] {
   font-weight: 600;
 }
 
+/* Route pill: how a connection reaches the other device (direct vs relayed through TURN). */
+.path {
+  flex: none;
+  margin: 0 8px;
+  padding: 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.path[data-path='direct'] {
+  color: var(--good);
+  border-color: currentColor;
+}
+
+.path[data-path='relay'] {
+  color: var(--ok);
+  border-color: currentColor;
+}
+
+.conn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 0;
+}
+
+.conn .path {
+  margin: 0;
+}
+
 .players .meta,
 .players .empty {
   color: var(--muted);
@@ -579,4 +746,37 @@ output {
   opacity: 0;
   pointer-events: none;
   z-index: 10;
+}
+
+/* ---------- muted badge ---------- */
+
+.badge {
+  flex: none;
+  margin-left: 10px;
+  padding: 2px 9px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ok);
+}
+
+.badge[hidden] {
+  display: none;
+}
+
+.calib-muted {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--ok);
+  border-radius: 12px;
+  font-size: 0.9rem;
+}
+
+.calib-muted[hidden] {
+  display: none;
 }

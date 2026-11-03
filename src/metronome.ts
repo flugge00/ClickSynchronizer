@@ -24,6 +24,7 @@ export class Metronome {
   /** Fires when a tick is heard (for visuals). */
   onTick: (t: Tick) => void = () => {};
 
+  private silenced = false;
   private ctx?: AudioContext;
   private out?: GainNode;
   private segments: Segment[] = [];
@@ -41,7 +42,7 @@ export class Metronome {
     if (!this.ctx) {
       this.ctx = new AudioContext({ latencyHint: 'interactive' });
       this.out = this.ctx.createGain();
-      this.out.gain.value = this.volume;
+      this.out.gain.value = this.silenced ? 0 : this.volume;
       this.out.connect(this.ctx.destination);
       setInterval(() => this.schedule(), TIMER_MS);
       const frame = () => {
@@ -86,7 +87,19 @@ export class Metronome {
 
   setVolume(v: number) {
     this.volume = v;
-    if (this.out) this.out.gain.value = v;
+    this.applyGain();
+  }
+
+  /** Silences everything on this device, including clicks that are already scheduled. */
+  setMuted(m: boolean) {
+    this.silenced = m;
+    this.applyGain();
+  }
+
+  private applyGain() {
+    if (!this.out || !this.ctx) return;
+    // A very short ramp avoids an audible pop when muting in the middle of a click.
+    this.out.gain.setTargetAtTime(this.silenced ? 0 : this.volume, this.ctx.currentTime, 0.005);
   }
 
   private schedule() {

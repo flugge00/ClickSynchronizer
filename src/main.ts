@@ -3,15 +3,29 @@ import './style.css';
 import { Clock } from './clock';
 import { changePoint, nextTick, withSegment, type Accent, type Segment, type Settings } from './grid';
 import { Metronome, type Sound } from './metronome';
-import { hostRoom, joinRoom, type Transport } from './transport';
+import { hostRoom, joinRoom, type Path, type Transport } from './transport';
 
 type Msg =
   | { t: 'ping'; c0: number }
   | { t: 'pong'; c0: number; h: number }
   | { t: 'state'; rev: number; segments: Segment[] }
-  | { t: 'info'; name: string; rtt: number; spread: number };
+  | { t: 'info'; name: string; rtt: number; spread: number; muted?: boolean };
 
-type Player = { name: string; rtt: number; spread: number };
+type Player = { name: string; rtt: number; spread: number; muted?: boolean; path?: Path };
+
+const PATH_LABEL: Record<Path, string> = { direct: 'Direct', relay: 'Relay' };
+const PATH_TITLE: Record<Path, string> = {
+  direct: 'Connected straight between the devices (lowest delay).',
+  relay: 'Going through the Cloudflare relay (TURN) because a direct connection was not possible. Works, but adds some delay and jitter.',
+};
+
+/** Fills a small pill showing how a connection is routed; empty while unknown. */
+function setPathPill(el: HTMLElement, path: Path | undefined) {
+  el.hidden = false;
+  el.textContent = path ? PATH_LABEL[path] : 'Checking…';
+  el.title = path ? PATH_TITLE[path] : '';
+  el.dataset.path = path ?? 'unknown';
+}
 type Link = 'connecting' | 'notfound' | 'connected' | 'reconnecting' | 'live' | 'offline';
 
 const LEAD_MS = { solo: 60, host: 400 }; // how far ahead changes take effect
@@ -32,7 +46,9 @@ const prefs = {
   profiles: [{ name: 'Wired / speaker', latency: 0 }],
   profile: 0,
   flash: false,
+  muted: false,
   name: '',
+  theme: 'system' as 'system' | 'light' | 'dark',
 };
 try {
   Object.assign(prefs, JSON.parse(localStorage.getItem('clicksync') ?? '{}'));
@@ -42,6 +58,16 @@ const save = () => {
     localStorage.setItem('clicksync', JSON.stringify(prefs));
   } catch {}
 };
+
+function applyTheme() {
+  const root = document.documentElement;
+  if (prefs.theme === 'system') delete root.dataset.theme;
+  else root.dataset.theme = prefs.theme;
+  const bg = getComputedStyle(root).getPropertyValue('--bg').trim();
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', bg);
+}
+applyTheme();
+matchMedia('(prefers-color-scheme: light)').addEventListener('change', applyTheme);
 
 // ---------- state ----------
 const clock = new Clock();
@@ -56,6 +82,9 @@ let net: Transport<Msg> | undefined;
 let code = '';
 let link: Link = 'connecting';
 let rev = 0;
+let hostPath: Path | undefined; // how this listener reaches the host
+let lastOk = 0; // when a listener was last connected (or started trying)
+const STUCK_MS = 12000; // after this long without a connection, say so instead of "Connecting…"
 const players = new Map<string, Player>();
 
 const stoppedGrid = (): Segment[] => [
@@ -116,9 +145,15 @@ function startHost(roomCode = newCode(), reclaimTries = 0) {
     onMessage(m, from) {
       if (m.t === 'ping') room.send(clock.pong(m.c0), from);
       if (m.t === 'info') {
-        players.set(from, { name: String(m.name).slice(0, 20), rtt: m.rtt, spread: m.spread });
+        players.set(from, { ...players.get(from), name: String(m.name).slice(0, 20), rtt: m.rtt, spread: m.spread, muted: !!m.muted });
         render();
       }
+    },
+    onPath(id, path) {
+      const p = players.get(id);
+      if (!p) return;
+      p.path = path;
+      render();
     },
     onError(type) {
       if (net !== room) return;
@@ -151,24 +186,32 @@ function startListener(roomCode: string) {
   code = roomCode;
   link = 'connecting';
   rev = -1;
+  lastOk = Date.now();
+  hostPath = undefined;
   clock.reset();
   segments = stoppedGrid();
   metro.setSegments(segments);
   const room = joinRoom<Msg>(roomCode, {
     onJoin() {
       link = 'connected';
+      lastOk = Date.now();
       rev = -1;
       burstPing();
       render();
     },
     onLeave() {
       link = 'reconnecting';
+      hostPath = undefined;
+      render();
+    },
+    onPath(_id, path) {
+      hostPath = path;
       render();
     },
     onMessage(m) {
       if (m.t === 'pong') {
         clock.onPong(m.c0, m.h);
-        room.send({ t: 'info', name: prefs.name, rtt: Math.round(clock.rtt), spread: Math.round(clock.spread) });
+        sendInfo();
       }
       if (m.t === 'state' && m.rev > rev) {
         rev = m.rev;
@@ -184,6 +227,12 @@ function startListener(roomCode: string) {
   });
   net = room;
   render();
+}
+
+/** Tells the host who we are and how we are doing. Sent after every sync and whenever name or mute changes. */
+function sendInfo() {
+  if (role !== 'listener' || !clock.synced) return;
+  net?.send({ t: 'info', name: prefs.name, rtt: Math.round(clock.rtt), spread: Math.round(clock.spread), muted: prefs.muted });
 }
 
 function burstPing() {
@@ -209,7 +258,10 @@ function leave() {
 
 // Listeners re-sync every 2 s; the host re-sends the grid as a heartbeat.
 setInterval(() => {
-  if (role === 'listener') net?.send(clock.ping());
+  if (role === 'listener') {
+    net?.send(clock.ping());
+    renderStatus(); // lets the "can't reach the host" hint appear without another event
+  }
   if (role === 'host') net?.send({ t: 'state', rev, segments });
 }, 2000);
 
@@ -248,9 +300,23 @@ function render() {
   });
 
   $('metro').classList.toggle('readonly', readonly);
+  $('listenBanner').hidden = $('listenState').hidden = !readonly;
+  $('actions').hidden = readonly;
+  if (readonly) {
+    const waiting = link !== 'connected' || !clock.synced;
+    $('listenText').textContent = waiting ? 'Connecting to the host…' : s.playing ? 'Host is playing' : 'Waiting for the host to start';
+    $('listenDot').dataset.tone = waiting ? 'ok' : s.playing ? 'good' : 'ok';
+  }
+  $('mutedBadge').hidden = !prefs.muted;
+  if (readonly && document.activeElement !== listenName) listenName.value = prefs.name;
   document.querySelectorAll<HTMLButtonElement | HTMLInputElement>('.host-control').forEach((el) => (el.disabled = readonly));
   document.querySelectorAll<HTMLElement>('[data-view]').forEach((v) => (v.hidden = v.dataset.view !== role));
   $('hostCode').textContent = $('listenCode').textContent = code;
+  if (readonly) {
+    const pill = $('listenPath');
+    if (link === 'connected') setPathPill(pill, hostPath);
+    else pill.hidden = true;
+  }
 
   renderStatus();
   if (role === 'host') renderPlayers();
@@ -272,6 +338,9 @@ function renderStatus() {
       connected: clock.synced ? ['Synced', 'good'] : ['Syncing…', 'ok'],
     };
     [text, tone] = map[link] ?? ['', 'ok'];
+    if ((link === 'connecting' || link === 'reconnecting') && Date.now() - lastOk > STUCK_MS) {
+      [text, tone] = ["Can't reach the host – retrying", 'bad'];
+    }
   }
   el.hidden = !text;
   el.textContent = text;
@@ -284,7 +353,7 @@ function renderPlayers() {
   if (!players.size) {
     const li = document.createElement('li');
     li.className = 'empty';
-    li.textContent = 'Waiting for players to join…';
+    li.textContent = 'Waiting for listeners to join…';
     list.replaceChildren(li);
     return;
   }
@@ -293,15 +362,26 @@ function renderPlayers() {
       const li = document.createElement('li');
       const dot = document.createElement('span');
       const name = document.createElement('span');
+      const pill = document.createElement('span');
       const meta = document.createElement('span');
       const synced = p.rtt > 0;
+      pill.className = 'path';
+      setPathPill(pill, p.path);
       dot.className = 'dot';
       dot.dataset.tone = !synced ? 'ok' : p.spread <= 3 ? 'good' : p.spread <= 10 ? 'ok' : 'bad';
       name.className = 'name';
-      name.textContent = p.name || 'Player';
+      name.textContent = p.name || 'Listener';
       meta.className = 'meta';
       meta.textContent = synced ? `${p.rtt} ms · ±${p.spread} ms` : 'Syncing…';
-      li.append(dot, name, meta);
+      li.append(dot, name);
+      if (p.muted) {
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.textContent = 'Muted';
+        badge.title = 'This listener has muted their click.';
+        li.append(badge);
+      }
+      li.append(pill, meta);
       return li;
     }),
   );
@@ -375,7 +455,28 @@ $('tap').addEventListener('pointerdown', (e) => {
   if (taps.length > 1) setBpm(60000 / ((taps[taps.length - 1] - taps[0]) / (taps.length - 1)));
 });
 
+// ---------- mute ----------
+const muteBtn = $('mute');
+function setMuted(m: boolean) {
+  prefs.muted = m;
+  save();
+  metro.setMuted(m);
+  muteBtn.setAttribute('aria-pressed', String(m));
+  muteBtn.setAttribute('aria-label', m ? 'Unmute click' : 'Mute click');
+  muteBtn.title = m ? 'Unmute (M)' : 'Mute (M)';
+  $('mutedBadge').hidden = !m;
+  if (settings.open) renderSettings();
+  sendInfo();
+}
+muteBtn.addEventListener('click', () => {
+  metro.unlock();
+  setMuted(!prefs.muted);
+});
+
 document.addEventListener('keydown', (e) => {
+  if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target as HTMLElement).matches('input, textarea, dialog *')) {
+    setMuted(!prefs.muted);
+  }
   if (role === 'listener' || (e.target as HTMLElement).matches('input, textarea, dialog *')) return;
   if (e.code === 'Space') {
     e.preventDefault();
@@ -444,6 +545,11 @@ function renderSettings() {
   document.querySelectorAll<HTMLElement>('[data-sound]').forEach((b) => {
     b.setAttribute('aria-pressed', String(b.dataset.sound === prefs.sound));
   });
+  document.querySelectorAll<HTMLElement>('#theme [data-theme]').forEach((b) => {
+    b.setAttribute('aria-pressed', String(b.dataset.theme === prefs.theme));
+  });
+  $('calibMuted').hidden = !prefs.muted;
+  calibStart.disabled = prefs.muted || calibLocked;
   $('reported').textContent = metro.unlocked ? `The browser reports ${metro.outputLatencyMs} ms, which is already included.` : '';
 }
 
@@ -467,6 +573,15 @@ document.querySelectorAll<HTMLElement>('[data-sound]').forEach((b) =>
   b.addEventListener('click', () => {
     prefs.sound = metro.sound = b.dataset.sound as Sound;
     save();
+    renderSettings();
+  }),
+);
+
+document.querySelectorAll<HTMLElement>('#theme [data-theme]').forEach((b) =>
+  b.addEventListener('click', () => {
+    prefs.theme = b.dataset.theme as typeof prefs.theme;
+    save();
+    applyTheme();
     renderSettings();
   }),
 );
@@ -501,15 +616,68 @@ $('deleteProfile').addEventListener('click', () => {
   applyProfile();
 });
 
-// Tap test: compare taps with the beats this device should be playing.
+// Calibration: start it explicitly, tap on a separate pad, and lock the start button briefly
+// afterwards so trailing taps can't begin (and spoil) another run.
 const TAPS_NEEDED = 10;
+const RESTART_LOCK_MS = 1500;
 let calib: number[] = [];
-const tapTest = $('tapTest');
-tapTest.addEventListener('pointerdown', (e) => {
-  if (!current().playing || !metro.playing) {
-    $('tapResult').textContent = 'Start the click first, then tap along with it.';
-    return;
+let calibRunning = false;
+let calibStartedClick = false; // solo only: we started the click for the test, so we stop it again
+const calibStart = $<HTMLButtonElement>('calibStart');
+const calibRun = $('calibRun');
+const calibProgress = $<HTMLProgressElement>('calibProgress');
+const tapResult = $('tapResult');
+let calibLock: ReturnType<typeof setTimeout> | undefined;
+let calibLocked = false;
+
+function showCalib(running: boolean) {
+  calibRunning = running;
+  calib = [];
+  calibStart.hidden = running;
+  calibRun.hidden = !running;
+  calibProgress.value = 0;
+  $('tapPadCount').textContent = `${TAPS_NEEDED} taps to go`;
+}
+
+function endCalib(message: string, done = false) {
+  showCalib(false);
+  if (calibStartedClick && role === 'solo') change({ playing: false });
+  calibStartedClick = false;
+  tapResult.textContent = message;
+  if (!done) return;
+  calibStart.textContent = 'Calibrate again';
+  calibLocked = true;
+  renderSettings();
+  clearTimeout(calibLock);
+  calibLock = setTimeout(() => {
+    calibLocked = false;
+    renderSettings();
+  }, RESTART_LOCK_MS);
+}
+
+$('calibUnmute').addEventListener('click', () => setMuted(false));
+
+calibStart.addEventListener('click', () => {
+  if (prefs.muted) return;
+  metro.unlock();
+  if (!current().playing) {
+    if (role === 'solo') {
+      change({ playing: true });
+      calibStartedClick = true;
+    } else {
+      tapResult.textContent = role === 'host' ? 'Press Start on the main screen first, then calibrate.' : 'Wait for the host to start the click, then calibrate.';
+      return;
+    }
   }
+  tapResult.textContent = '';
+  showCalib(true);
+});
+$('calibCancel').addEventListener('click', () => endCalib('Calibration cancelled.'));
+settings.addEventListener('close', () => calibRunning && endCalib(''));
+
+$('tapPad').addEventListener('pointerdown', (e) => {
+  if (!calibRunning) return;
+  if (!current().playing || !metro.playing) return endCalib('The click stopped, so calibration was cancelled.');
   const t = e.timeStamp - performance.now() + clock.now();
   let nearest = Infinity;
   for (let k = nextTick(segments, t - 2500); k && k.time < t + 2500; k = nextTick(segments, k.time)) {
@@ -518,18 +686,26 @@ tapTest.addEventListener('pointerdown', (e) => {
   if (!Number.isFinite(nearest)) return;
   calib.push(t - nearest);
   if (calib.length < TAPS_NEEDED) {
-    tapTest.textContent = `Keep tapping… ${TAPS_NEEDED - calib.length}`;
+    calibProgress.value = calib.length;
+    $('tapPadCount').textContent = `${TAPS_NEEDED - calib.length} taps to go`;
     return;
   }
   const sorted = calib.slice(2).sort((a, b) => a - b);
   const median = Math.round(sorted[Math.floor(sorted.length / 2)]);
-  calib = [];
   setLatency(profile().latency + median);
-  tapTest.textContent = 'Tap along to calibrate';
-  $('tapResult').textContent = `Adjusted by ${median > 0 ? '+' : ''}${median} ms and saved to "${profile().name}". Fine-tune by ear with the slider.`;
+  endCalib(`Done! Adjusted by ${median > 0 ? '+' : ''}${median} ms and saved to "${profile().name}". Fine-tune by ear with the slider.`, true);
+});
+
+// Listeners can change their name after joining; the host's list updates right away.
+const listenName = $<HTMLInputElement>('listenName');
+listenName.addEventListener('input', () => {
+  prefs.name = listenName.value.trim().slice(0, 20);
+  save();
+  sendInfo();
 });
 
 // ---------- start ----------
+setMuted(prefs.muted);
 render();
 const savedHost = sessionStorage.getItem('hostCode');
 if (savedHost) startHost(savedHost);

@@ -9,6 +9,13 @@
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-192.png" />
+    <script>
+      // Apply the saved theme before first paint to avoid a flash of the wrong one.
+      try {
+        var t = JSON.parse(localStorage.getItem('clicksync') || '{}').theme;
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="flash" class="flash"></div>
@@ -16,6 +23,14 @@
     <header class="bar">
       <h1 class="brand"><img src="./icon.svg" alt="" />ClickSync</h1>
       <span id="status" class="status" hidden></span>
+      <button id="mute" class="icon-btn" aria-label="Mute click" aria-pressed="false" title="Mute (M)">
+        <svg class="icon-on" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M11 5 6 9H3v6h3l5 4z" /><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" />
+        </svg>
+        <svg class="icon-off" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M11 5 6 9H3v6h3l5 4z" /><path d="m16 9.5 5 5M21 9.5l-5 5" />
+        </svg>
+      </button>
       <button id="openSettings" class="icon-btn" aria-label="Settings">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" />
@@ -25,6 +40,14 @@
 
     <main class="layout">
       <section id="metro" class="card metro">
+        <div id="listenBanner" class="listen-banner" role="status" hidden>
+          <span class="listen-icon" aria-hidden="true">🎧</span>
+          <div>
+            <strong>Listening to the host</strong>
+            <span>Tempo and start/stop are controlled by the host. Tap a beat to mute it on this device only.</span>
+          </div>
+        </div>
+
         <div id="beats" class="beats" aria-label="Beats"></div>
 
         <div class="tempo">
@@ -54,9 +77,13 @@
           </div>
         </div>
 
-        <div class="actions">
+        <div id="actions" class="actions">
           <button id="tap" class="btn host-control">Tap</button>
           <button id="play" class="btn primary host-control">Start</button>
+        </div>
+        <div id="listenState" class="listen-state" role="status" hidden>
+          <span id="listenDot" class="dot"></span><span id="listenText"></span>
+          <span id="mutedBadge" class="badge" hidden>Muted</span>
         </div>
       </section>
 
@@ -80,7 +107,7 @@
             <button id="share" class="btn">Share link</button>
           </div>
           <div id="qr" class="qr"></div>
-          <h3>Players <span id="playerCount" class="muted"></span></h3>
+          <h3>Listeners<span id="playerCount" class="muted"></span></h3>
           <ul id="players" class="players"></ul>
           <button id="end" class="btn ghost wide">End session</button>
         </div>
@@ -88,6 +115,14 @@
         <div data-view="listener" hidden>
           <span class="label">Session code</span>
           <div id="listenCode" class="code"></div>
+          <p class="conn">
+            <span class="label">Connection</span>
+            <span id="listenPath" class="path" hidden></span>
+          </p>
+          <label class="field">
+            <span class="label">Your name</span>
+            <input id="listenName" maxlength="20" placeholder="Shown to the host" autocomplete="nickname" />
+          </label>
           <p class="muted">The host controls the tempo and start/stop. Tap a beat to mute it on this device only.</p>
           <button id="leave" class="btn ghost wide">Leave session</button>
         </div>
@@ -118,6 +153,15 @@
         </div>
 
         <div class="field">
+          <span class="label">Theme</span>
+          <div id="theme" class="seg">
+            <button type="button" data-theme="system">System</button>
+            <button type="button" data-theme="light">Light</button>
+            <button type="button" data-theme="dark">Dark</button>
+          </div>
+        </div>
+
+        <div class="field">
           <span class="label">Headphones</span>
           <div class="profile">
             <select id="profile" aria-label="Headphone profile"></select>
@@ -133,8 +177,20 @@
             Plays this device earlier to make up for headphone delay, saved per headphone profile. Bluetooth adds 150–300 ms.
             <span id="reported"></span>
           </p>
-          <button type="button" id="tapTest" class="btn wide">Tap along to calibrate</button>
-          <p id="tapResult" class="muted small"></p>
+          <p id="calibMuted" class="calib-muted" role="alert" hidden>
+            <span><strong>You're muted.</strong> Unmute to hear the click you tap along to.</span>
+            <button type="button" id="calibUnmute" class="btn">Unmute</button>
+          </p>
+          <button type="button" id="calibStart" class="btn wide">Start calibration</button>
+          <div id="calibRun" class="calib-run" hidden>
+            <button type="button" id="tapPad" class="tap-pad">
+              <strong>Tap on every click</strong>
+              <span id="tapPadCount"></span>
+            </button>
+            <progress id="calibProgress" max="10" value="0" aria-label="Calibration progress"></progress>
+            <button type="button" id="calibCancel" class="btn ghost wide">Cancel</button>
+          </div>
+          <p id="tapResult" class="muted small" aria-live="polite"></p>
         </div>
 
         <label class="check">
