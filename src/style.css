@@ -780,3 +780,160 @@ output {
 .calib-muted[hidden] {
   display: none;
 }
+
+/* ---------- alerts (sound paused, latency changed) ---------- */
+
+.alert {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 2px solid var(--bad);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bad) 14%, var(--surface));
+  text-align: left;
+}
+
+.alert span {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.alert.warn {
+  gap: 10px;
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, var(--surface));
+}
+
+.alert.warn > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.alert-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.alert-actions .btn {
+  min-height: 40px;
+  flex: 1;
+}
+
+/* ---------- roster (listener view) ---------- */
+
+.players .you {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.badge.host {
+  color: var(--accent);
+}
+
+/* ---------- pocket lock ---------- */
+
+html.locked,
+html.locked body {
+  overflow: hidden;
+  overscroll-behavior: none; /* no pull-to-refresh in a pocket */
+}
+
+.lock-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) calc(28px + env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
+  background: #000; /* black saves battery on OLED screens */
+  color: #8a8b93;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.lock-info {
+  flex: 1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.lock-status {
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.lock-beat {
+  font-size: clamp(6rem, 40vw, 12rem);
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: #3a3b42;
+}
+
+.lock-beat.on {
+  animation: lock-pulse 0.25s ease-out;
+}
+
+.lock-beat.accent {
+  color: #ff7a45;
+}
+
+@keyframes lock-pulse {
+  from {
+    color: #f3f3f5;
+    transform: scale(1.06);
+  }
+}
+
+.lock-bpm {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.lock-audio {
+  max-width: 300px;
+  padding: 10px 14px;
+  border: 2px solid #ff6262;
+  border-radius: 14px;
+  color: #f3f3f5;
+}
+
+.unlock-track {
+  position: relative;
+  width: min(100%, 360px);
+  height: 64px;
+  border-radius: 99px;
+  background: #18191d;
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+}
+
+.unlock-knob {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  width: 56px;
+  height: 56px;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #f3f3f5;
+  color: #000;
+  touch-action: none;
+}
+
+.unlock-knob.back {
+  transition: transform 0.25s ease-out;
+}

@@ -8,7 +8,24 @@ A metronome that keeps a whole group on the **same, tightly synced click**, each
 - **Clock sync, not "click now" messages.** Each listener estimates the host's clock with NTP-style ping/pong every 2 s. It uses the lowest-RTT samples and takes their median.
 - **Scheduled beat grid.** The host sends a short list of segments (`bpm`, meter, subdivision, accents, start time in host-clock ms). A change takes effect on the next downbeat at least 400 ms ahead, so every device switches on the same beat. Each device plays its own clicks with the Web Audio scheduler.
 - **Resilient.** If the host drops, listeners keep playing the grid they already have, and they reconnect automatically. If the host reloads, it reclaims its session code.
-- **Latency calibration.** Each device has a latency-offset slider and a tap-along test. The output latency the browser reports is already taken into account.
+- **Latency calibration.** Each device has a latency-offset slider and a tap-along test. The output latency the browser reports is already taken into account. If that reported latency later changes by 20 ms or more, or the audio output device changes, the app shows a warning to re-check.
+- **Who's here.** The host sends a roster to every listener, so everyone can see who is in the session and who is muted.
+
+## Sound
+
+- **Volume goes to 300%.** Each click is rendered in advance into a short buffer. 100% is a clean click at full scale. Above that, the click is driven into a soft limiter. The peak can't go past what the phone can output, but the click holds its full level for longer and gets denser, so it is much louder in practice.
+- **Sounds.** *Sharp* (the default: a square-ish 2 kHz click with a crisp edge, made to cut through a band), *Beep*, *Wood* and *Tick*.
+- **Accent strength** (per device, 0–100%). Sets how much accented beats, normally the 1, stand out: the accent goes up to an octave higher and the other beats down to half volume. 0% makes every beat the same.
+
+## Audio robustness
+
+Phones pause or break Web Audio without telling the page: on iOS, calls, other apps, Siri or headphones connecting can do it. Some devices even keep saying "running" while the audio clock has stopped. The metronome guards against this:
+
+- **Watchdog.** Twice a second it checks that the audio clock is really moving. If not, it resumes the audio, and after 1.5 s it rebuilds the audio context (up to 3 times per incident). If the browser insists on a tap, a red **"Sound is paused"** banner appears, and any tap on the page fixes it.
+- **Visuals don't depend on audio.** The beat dots, flash and lock screen follow the clock directly. If sound fails you still see the beat, and you see that sound is the problem.
+- **Keep-alive.** During a session, an inaudible 15 Hz tone at -70 dBFS keeps the audio output open between songs. This stops Chrome from parking the output after silence, keeps Bluetooth from changing latency when it goes idle, and stops Android handing audio focus back to other apps (such as Spotify) every time the click stops.
+- **Background.** Scheduling runs from a worker timer. When the page is hidden, it schedules 1.5 s ahead instead of 0.12 s. On Android this lets the click survive a switched-off screen in many cases. iOS always suspends web audio when the screen locks, so use the **pocket lock** instead.
+- **Pocket lock.** The padlock button covers the screen in black, blocks every touch, and keeps the screen awake. It shows the current beat and BPM. Slide the knob all the way across to unlock.
 
 | File | Role |
 |---|---|
@@ -55,4 +72,7 @@ Each connection shows a small pill: **Direct** (straight between devices, lowest
 - Put all phones on the same Wi-Fi (or the host's hotspot).
 - Use wired headphones. Bluetooth adds 150–300 ms, so calibrate those devices with the tap test or the slider.
 - Mute is remembered on each device, and the host sees who is muted.
-- Keep screens on. The app holds a wake lock, but the clicks stop if a phone is locked.
+- Keep screens on. The app holds a wake lock, but on iPhone the clicks stop if the phone is locked. Tap the **padlock** before the phone goes in a pocket instead of pressing the power button.
+- Hard to hear? Turn the phone's media volume all the way up, try the *Sharp* sound, and raise the volume above 100%.
+- Can't tell where the 1 is? Raise **Accent strength** in Settings.
+- Android and Spotify: if Spotify starts playing when the click stops, force-stop it during rehearsal (Settings → Apps → Spotify → Force stop).

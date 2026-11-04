@@ -31,6 +31,11 @@
           <path d="M11 5 6 9H3v6h3l5 4z" /><path d="m16 9.5 5 5M21 9.5l-5 5" />
         </svg>
       </button>
+      <button id="lock" class="icon-btn" aria-label="Lock screen" title="Lock the screen (pocket mode)">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" />
+        </svg>
+      </button>
       <button id="openSettings" class="icon-btn" aria-label="Settings">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" />
@@ -45,6 +50,22 @@
           <div>
             <strong>Listening to the host</strong>
             <span>Tempo and start/stop are controlled by the host.</span>
+          </div>
+        </div>
+
+        <button id="audioBanner" class="alert" type="button" hidden>
+          <strong>Sound is paused by your phone</strong>
+          <span>Tap here to turn it back on.</span>
+        </button>
+
+        <div id="latencyWarn" class="alert warn" role="status" hidden>
+          <div>
+            <strong>Headphone delay may have changed</strong>
+            <span id="latencyWarnText"></span>
+          </div>
+          <div class="alert-actions">
+            <button type="button" id="latencyRecal" class="btn">Recalibrate</button>
+            <button type="button" id="latencyDismiss" class="btn ghost">Dismiss</button>
           </div>
         </div>
 
@@ -107,6 +128,10 @@
             <button id="share" class="btn">Share link</button>
           </div>
           <div id="qr" class="qr"></div>
+          <label class="field">
+            <span class="label">Your name</span>
+            <input id="hostName" maxlength="20" placeholder="Shown to listeners" autocomplete="nickname" />
+          </label>
           <h3>Listeners<span id="playerCount" class="muted"></span></h3>
           <ul id="players" class="players"></ul>
           <button id="end" class="btn ghost wide">End session</button>
@@ -123,11 +148,15 @@
             <span class="label">Your name</span>
             <input id="listenName" maxlength="20" placeholder="Shown to the host" autocomplete="nickname" />
           </label>
-          <p class="muted">The host controls the tempo and start/stop.</p>
+          <h3>In this session<span id="rosterCount" class="muted"></span></h3>
+          <ul id="roster" class="players"></ul>
           <button id="leave" class="btn ghost wide">Leave session</button>
         </div>
 
-        <p class="hint">Keep this screen on and use wired headphones for the tightest sync. On iPhone, turn the silent switch off.</p>
+        <p class="hint">
+          Keep this screen on: use the lock button (padlock, top right) before the phone goes in your pocket. Wired headphones
+          give the tightest sync. On iPhone, turn the silent switch off.
+        </p>
       </section>
     </main>
 
@@ -138,18 +167,33 @@
           <button class="icon-btn" aria-label="Close">✕</button>
         </header>
 
-        <label class="field">
-          <span class="label">Volume</span>
-          <input id="volume" type="range" min="0" max="1" step="0.01" />
-        </label>
+        <div class="field">
+          <span class="label">Volume <output id="volumeOut"></output></span>
+          <input id="volume" type="range" min="0" max="3" step="0.05" aria-label="Volume" />
+          <p class="muted small">
+            100% is the loudest clean click. Above that (up to 300%) the click is pushed into a limiter: it can't go past
+            the phone's maximum, but it gets denser and much easier to hear over a band. Turn the phone's media volume all
+            the way up too.
+          </p>
+        </div>
 
         <div class="field">
           <span class="label">Sound</span>
           <div id="sound" class="seg">
+            <button type="button" data-sound="sharp">Sharp</button>
             <button type="button" data-sound="beep">Beep</button>
             <button type="button" data-sound="wood">Wood</button>
             <button type="button" data-sound="tick">Tick</button>
           </div>
+        </div>
+
+        <div class="field">
+          <span class="label">Accent strength <output id="accentOut"></output></span>
+          <input id="accentStrength" type="range" min="0" max="1" step="0.05" aria-label="Accent strength" />
+          <p class="muted small">
+            How much accented beats (normally the 1) stand out: higher pitch, and the other beats quieter. 0% makes every
+            beat sound the same. Only affects this device.
+          </p>
         </div>
 
         <div class="field">
@@ -170,7 +214,7 @@
           </div>
         </div>
 
-        <div class="field">
+        <div id="calibration" class="field">
           <span class="label">Latency offset <output id="latencyOut"></output></span>
           <input id="latency" type="range" min="-100" max="400" step="1" />
           <p class="muted small">
@@ -199,6 +243,21 @@
         </label>
       </form>
     </dialog>
+
+    <div id="lockScreen" class="lock-screen" role="dialog" aria-modal="true" aria-label="Screen locked" hidden>
+      <div class="lock-info">
+        <span id="lockStatus" class="lock-status"></span>
+        <div id="lockBeat" class="lock-beat">–</div>
+        <div class="lock-bpm"><span id="lockBpm"></span> BPM</div>
+        <p id="lockAudio" class="lock-audio" hidden>Sound is paused by your phone. Tap anywhere to turn it back on.</p>
+      </div>
+      <div id="unlockTrack" class="unlock-track">
+        <button type="button" id="unlockKnob" class="unlock-knob" aria-label="Slide right to unlock">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+        </button>
+        <span>Slide to unlock</span>
+      </div>
+    </div>
 
     <dialog id="joinDialog">
       <form id="joinDialogForm" method="dialog">

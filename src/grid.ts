@@ -31,6 +31,14 @@ export interface Tick {
 const tickMs = (s: Segment) => 60000 / s.bpm / s.subdivision;
 const barMs = (s: Segment) => (60000 / s.bpm) * s.beatsPerBar;
 
+/**
+ * Tolerance in ms for "is this the same tick?". Host-clock times are ~1.7e12 ms, where a double
+ * only resolves ~0.00024 ms, so a relative tolerance is not enough. With a relative one, fast
+ * ticks (16ths above ~127 BPM) could round back onto the previous tick, and the scheduler then
+ * looped forever on the same click until the browser crashed.
+ */
+const EPS_MS = 0.01;
+
 function indexAt(segs: Segment[], t: number): number {
   let i = 0;
   while (i + 1 < segs.length && segs[i + 1].start <= t) i++;
@@ -46,8 +54,10 @@ export function nextTick(segs: Segment[], after: number): Tick | null {
     const end = segs[i + 1]?.start ?? Infinity;
     if (!s.playing || end <= after) continue;
     const len = tickMs(s);
-    const k = Math.max(0, Math.floor((after - s.start) / len + 1e-6) + 1);
-    const time = s.start + k * len;
+    let k = Math.max(0, Math.floor((after + EPS_MS - s.start) / len) + 1);
+    let time = s.start + k * len;
+    if (time <= after) time = s.start + ++k * len; // belt and braces: always move forward
+
     if (time >= end) continue;
     const beat = Math.floor(k / s.subdivision) % s.beatsPerBar;
     return { time, beat, sub: k % s.subdivision, accent: s.accents[beat] ?? 1 };
@@ -60,7 +70,7 @@ export function changePoint(segs: Segment[], t: number): number {
   const i = indexAt(segs, t);
   const s = segs[i];
   const bar = barMs(s);
-  const at = s.playing ? s.start + Math.max(0, Math.ceil((t - s.start) / bar - 1e-6)) * bar : t;
+  const at = s.playing ? s.start + Math.max(0, Math.ceil((t - s.start - EPS_MS) / bar)) * bar : t;
   const next = segs[i + 1]?.start;
   return next !== undefined && next < at ? next : at;
 }

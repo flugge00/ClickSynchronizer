@@ -9,9 +9,12 @@ type Msg =
   | { t: 'ping'; c0: number }
   | { t: 'pong'; c0: number; h: number }
   | { t: 'state'; rev: number; segments: Segment[] }
-  | { t: 'info'; name: string; rtt: number; spread: number; muted?: boolean };
+  | { t: 'info'; name: string; rtt: number; spread: number; muted?: boolean }
+  | { t: 'roster'; players: RosterEntry[] };
 
 type Player = { name: string; rtt: number; spread: number; muted?: boolean; path?: Path };
+/** Who is in the session, as the host tells each listener. */
+type RosterEntry = { name: string; host?: boolean; you?: boolean; muted?: boolean };
 
 const PATH_LABEL: Record<Path, string> = { direct: 'Direct', relay: 'Relay' };
 const PATH_TITLE: Record<Path, string> = {
@@ -40,10 +43,13 @@ const prefs = {
   beatsPerBar: 4,
   subdivision: 1,
   accents: [2, 1, 1, 1] as Accent[],
-  volume: 0.8,
-  sound: 'beep' as Sound,
-  /** Saved latency calibrations, one per pair of headphones. */
-  profiles: [{ name: 'Wired / speaker', latency: 0 }],
+  /** 0–3 (0–300 %); above 1 is over-gain into the limiter. */
+  volume: 1,
+  sound: 'Beep' as Sound,
+  /** 0–1: how distinct accented beats (the 1) are. */
+  accent: 0.5,
+  /** Saved latency calibrations, one per pair of headphones. `reported` = browser-reported latency when calibrated. */
+  profiles: [{ name: 'Wired / speaker', latency: 0 }] as { name: string; latency: number; reported?: number }[],
   profile: 0,
   flash: false,
   muted: false,
@@ -53,6 +59,10 @@ const prefs = {
 try {
   Object.assign(prefs, JSON.parse(localStorage.getItem('clicksync') ?? '{}'));
 } catch {}
+// Saved prefs may come from an older version: keep them in range.
+if (!['sharp', 'beep', 'wood', 'tick'].includes(prefs.sound)) prefs.sound = 'sharp';
+prefs.volume = clamp(Number(prefs.volume) || 0, 0, 3);
+prefs.accent = clamp(Number(prefs.accent ?? 0.5), 0, 1);
 const save = () => {
   try {
     localStorage.setItem('clicksync', JSON.stringify(prefs));
@@ -73,7 +83,8 @@ matchMedia('(prefers-color-scheme: light)').addEventListener('change', applyThem
 const clock = new Clock();
 const metro = new Metronome(clock.now);
 metro.setVolume(prefs.volume);
-metro.sound = prefs.sound;
+metro.setSound(prefs.sound);
+metro.setAccentStrength(prefs.accent);
 const profile = () => prefs.profiles[prefs.profile] ?? prefs.profiles[0];
 metro.latencyMs = profile().latency;
 
@@ -86,6 +97,8 @@ let hostPath: Path | undefined; // how this listener reaches the host
 let lastOk = 0; // when a listener was last connected (or started trying)
 const STUCK_MS = 12000; // after this long without a connection, say so instead of "Connecting…"
 const players = new Map<string, Player>();
+let roster: RosterEntry[] = []; // listener: who is in the session
+let locked = false;
 
 const stoppedGrid = (): Segment[] => [
   { bpm: prefs.bpm, beatsPerBar: prefs.beatsPerBar, subdivision: prefs.subdivision, accents: prefs.accents, playing: false, start: 0 },
@@ -136,16 +149,19 @@ function startHost(roomCode = newCode(), reclaimTries = 0) {
     onJoin(id) {
       players.set(id, { name: '', rtt: 0, spread: 0 });
       room.send({ t: 'state', rev, segments }, id);
+      sendRoster(true);
       render();
     },
     onLeave(id) {
       players.delete(id);
+      sendRoster();
       render();
     },
     onMessage(m, from) {
       if (m.t === 'ping') room.send(clock.pong(m.c0), from);
       if (m.t === 'info') {
         players.set(from, { ...players.get(from), name: String(m.name).slice(0, 20), rtt: m.rtt, spread: m.spread, muted: !!m.muted });
+        sendRoster();
         render();
       }
     },
@@ -178,6 +194,23 @@ async function showQr() {
 }
 
 const shareUrl = () => `${location.origin}${location.pathname}#/join/${code}`;
+
+/** Host: tells every listener who is in the session (each gets its own copy with "you" marked). */
+let rosterKey = '';
+function sendRoster(force = false) {
+  if (role !== 'host' || !net) return;
+  const list = [...players].map(([id, p]) => ({ id, name: p.name, muted: p.muted }));
+  const key = JSON.stringify([prefs.name, prefs.muted, list]);
+  if (!force && key === rosterKey) return;
+  rosterKey = key;
+  for (const { id } of list) {
+    const entries: RosterEntry[] = [
+      { name: prefs.name, host: true, muted: prefs.muted },
+      ...list.map((p) => ({ name: p.name, muted: p.muted, you: p.id === id })),
+    ];
+    net.send({ t: 'roster', players: entries }, id);
+  }
+}
 
 // ---------- listening ----------
 function startListener(roomCode: string) {
@@ -217,6 +250,7 @@ function startListener(roomCode: string) {
         rev = m.rev;
         segments = m.segments;
       }
+      if (m.t === 'roster' && Array.isArray(m.players)) roster = m.players.slice(0, 50);
       if (clock.synced) metro.setSegments(segments);
       render();
     },
@@ -244,6 +278,7 @@ function leave() {
   net = undefined;
   sessionStorage.removeItem('hostCode');
   history.replaceState(null, '', location.pathname);
+  roster = [];
   if (role === 'listener') {
     clock.reset();
     metro.muted.clear();
@@ -262,7 +297,11 @@ setInterval(() => {
     net?.send(clock.ping());
     renderStatus(); // lets the "can't reach the host" hint appear without another event
   }
-  if (role === 'host') net?.send({ t: 'state', rev, segments });
+  if (role === 'host') {
+    net?.send({ t: 'state', rev, segments });
+    sendRoster(true); // heartbeat: a listener that missed an update catches up
+  }
+  checkLatencyDrift();
 }, 2000);
 
 // ---------- rendering ----------
@@ -318,9 +357,58 @@ function render() {
     else pill.hidden = true;
   }
 
+  if (role === 'host' && document.activeElement !== hostName) hostName.value = prefs.name;
+  if (readonly) renderRoster();
+
+  // Audio stays "on" (with an inaudible keep-alive) for the whole session, not just while playing.
+  metro.setActive(role !== 'solo' || s.playing);
+  renderAudioHealth();
+  renderLock();
   renderStatus();
   if (role === 'host') renderPlayers();
   updateWakeLock();
+}
+
+function renderAudioHealth() {
+  const blocked = metro.audioHealth === 'blocked';
+  $('audioBanner').hidden = !blocked;
+  $('lockAudio').hidden = !blocked;
+}
+
+function renderRoster() {
+  const list = $('roster');
+  $('rosterCount').textContent = roster.length ? ` (${roster.length})` : '';
+  if (!roster.length) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = link === 'connected' ? 'Loading…' : 'Not connected';
+    list.replaceChildren(li);
+    return;
+  }
+  list.replaceChildren(
+    ...roster.map((p) => {
+      const li = document.createElement('li');
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = String(p.name || (p.host ? 'Host' : 'Listener')).slice(0, 20);
+      if (p.you) {
+        const you = document.createElement('span');
+        you.className = 'you';
+        you.textContent = ' (you)';
+        name.append(you);
+      }
+      li.append(name);
+      const badge = (text: string, cls = '') => {
+        const b = document.createElement('span');
+        b.className = `badge ${cls}`;
+        b.textContent = text;
+        li.append(b);
+      };
+      if (p.host && p.name) badge('Host', 'host'); // a nameless host is already shown as "Host"
+      if (p.muted) badge('Muted');
+      return li;
+    }),
+  );
 }
 
 function renderStatus() {
@@ -389,16 +477,91 @@ function renderPlayers() {
 
 metro.onTick = (t) => {
   if (t.sub) return;
+  if (locked) {
+    const el = $('lockBeat');
+    el.textContent = String(t.beat + 1);
+    el.classList.toggle('accent', t.accent === 2);
+    el.classList.remove('on');
+    void el.offsetWidth; // restart the pulse animation
+    el.classList.add('on');
+  }
   [...beatsEl.children].forEach((b, i) => b.classList.toggle('now', i === t.beat));
   if (prefs.flash && t.accent && !metro.muted.has(t.beat)) {
     $('flash').animate([{ opacity: t.accent === 2 ? 0.9 : 0.45 }, { opacity: 0 }], { duration: 160, easing: 'ease-out' });
   }
 };
 
+// ---------- audio health ----------
+metro.onHealth = () => renderAudioHealth();
+$('audioBanner').addEventListener('click', () => metro.unlock());
+// Any tap or key press counts as a user gesture, which is what the browser needs to restart audio.
+for (const type of ['pointerup', 'touchend', 'keydown'] as const) {
+  document.addEventListener(type, () => metro.heal(), { capture: true, passive: true });
+}
+
+// ---------- pocket lock ----------
+// A black screen that swallows all touches until you slide the knob all the way across. The
+// screen stays on (wake lock), so the click keeps going in a pocket without anything changing.
+const lockScreen = $('lockScreen');
+const knob = $('unlockKnob');
+function setLocked(on: boolean) {
+  locked = on;
+  if (on) {
+    metro.unlock();
+    for (const d of [settings, joinDialog]) if (d.open) d.close();
+    $('lockBeat').textContent = '–';
+    $('lockBeat').className = 'lock-beat';
+  }
+  lockScreen.hidden = !on;
+  document.documentElement.classList.toggle('locked', on);
+  // Nothing behind the lock can be focused or clicked, not even with a keyboard.
+  document.querySelectorAll<HTMLElement>('body > header, body > main').forEach((el) => (el.inert = on));
+  knob.style.transform = '';
+  if (on) knob.focus();
+  render();
+}
+
+function renderLock() {
+  if (!locked) return;
+  const s = current();
+  $('lockBpm').textContent = String(s.bpm);
+  $('lockStatus').textContent = s.playing ? 'Playing' : role === 'listener' ? 'Waiting for the host' : 'Stopped';
+  if (!s.playing) $('lockBeat').textContent = '–';
+}
+
+$('lock').addEventListener('click', () => setLocked(true));
+let drag: { x0: number; max: number } | undefined;
+knob.addEventListener('pointerdown', (e) => {
+  try {
+    knob.setPointerCapture(e.pointerId);
+  } catch {}
+  knob.classList.remove('back');
+  drag = { x0: e.clientX, max: $('unlockTrack').clientWidth - knob.offsetWidth - 8 };
+});
+knob.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  const x = clamp(e.clientX - drag.x0, 0, drag.max);
+  knob.style.transform = `translateX(${x}px)`;
+  if (x >= drag.max * 0.95) {
+    drag = undefined;
+    setLocked(false);
+  }
+});
+const release = () => {
+  if (!drag) return;
+  drag = undefined;
+  knob.classList.add('back');
+  knob.style.transform = '';
+};
+knob.addEventListener('pointerup', release);
+knob.addEventListener('pointercancel', release);
+knob.addEventListener('keydown', (e) => (e.key === 'Enter' || e.key === ' ') && setLocked(false));
+lockScreen.addEventListener('contextmenu', (e) => e.preventDefault());
+
 // ---------- wake lock ----------
 let wakeLock: Promise<WakeLockSentinel | undefined> | undefined;
 function updateWakeLock() {
-  const want = (role !== 'solo' || current().playing) && document.visibilityState === 'visible';
+  const want = (role !== 'solo' || current().playing || locked) && document.visibilityState === 'visible';
   if (want && !wakeLock) {
     wakeLock = navigator.wakeLock?.request('screen').catch(() => undefined);
     wakeLock?.then((l) => l?.addEventListener('release', () => (wakeLock = undefined)));
@@ -467,6 +630,7 @@ function setMuted(m: boolean) {
   $('mutedBadge').hidden = !m;
   if (settings.open) renderSettings();
   sendInfo();
+  sendRoster();
 }
 muteBtn.addEventListener('click', () => {
   metro.unlock();
@@ -474,6 +638,7 @@ muteBtn.addEventListener('click', () => {
 });
 
 document.addEventListener('keydown', (e) => {
+  if (locked) return;
   if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target as HTMLElement).matches('input, textarea, dialog *')) {
     setMuted(!prefs.muted);
   }
@@ -532,9 +697,14 @@ const volume = $<HTMLInputElement>('volume');
 const latency = $<HTMLInputElement>('latency');
 const profileSelect = $<HTMLSelectElement>('profile');
 const flashToggle = $<HTMLInputElement>('flashToggle');
+const accentStrength = $<HTMLInputElement>('accentStrength');
+const pct = (v: number) => `${Math.round(v * 100)}%`;
 
 function renderSettings() {
   volume.value = String(prefs.volume);
+  $('volumeOut').textContent = pct(prefs.volume);
+  accentStrength.value = String(prefs.accent);
+  $('accentOut').textContent = pct(prefs.accent);
   const ms = (v: number) => `${v > 0 ? '+' : ''}${v} ms`;
   profileSelect.replaceChildren(...prefs.profiles.map((p, i) => new Option(`${p.name} (${ms(p.latency)})`, String(i))));
   profileSelect.value = String(prefs.profile);
@@ -562,6 +732,15 @@ for (const d of [settings, joinDialog]) d.addEventListener('click', (e) => e.tar
 volume.addEventListener('input', () => {
   prefs.volume = Number(volume.value);
   metro.setVolume(prefs.volume);
+  $('volumeOut').textContent = pct(prefs.volume);
+  metro.preview(['beat']);
+  save();
+});
+accentStrength.addEventListener('input', () => {
+  prefs.accent = Number(accentStrength.value);
+  metro.setAccentStrength(prefs.accent);
+  $('accentOut').textContent = pct(prefs.accent);
+  metro.preview();
   save();
 });
 latency.addEventListener('input', () => setLatency(Number(latency.value)));
@@ -571,7 +750,10 @@ flashToggle.addEventListener('change', () => {
 });
 document.querySelectorAll<HTMLElement>('[data-sound]').forEach((b) =>
   b.addEventListener('click', () => {
-    prefs.sound = metro.sound = b.dataset.sound as Sound;
+    prefs.sound = b.dataset.sound as Sound;
+    metro.setSound(prefs.sound);
+    metro.unlock();
+    metro.preview();
     save();
     renderSettings();
   }),
@@ -588,14 +770,63 @@ document.querySelectorAll<HTMLElement>('#theme [data-theme]').forEach((b) =>
 
 function setLatency(ms: number) {
   profile().latency = clamp(Math.round(ms), -100, 400);
+  if (metro.unlocked) profile().reported = metro.outputLatencyMs; // baseline for the drift warning
   applyProfile();
 }
 
 function applyProfile() {
   metro.latencyMs = profile().latency;
+  outputChanged = false; // picking or changing a profile acknowledges a device change
   save();
   renderSettings();
+  renderLatencyWarn();
 }
+
+// ---------- latency drift warning ----------
+// The browser's reported output latency is already compensated automatically. But the manual offset
+// on top of it was measured for one setup, so if the report jumps or the output device changes,
+// the user is probably on other headphones (or Bluetooth renegotiated) and should re-check.
+const DRIFT_WARN_MS = 20;
+let outputChanged = false;
+function checkLatencyDrift() {
+  if (!metro.unlocked) return;
+  const p = profile();
+  if (p.reported === undefined) {
+    p.reported = metro.outputLatencyMs; // first time we know it for this profile
+    save();
+  }
+  renderLatencyWarn();
+}
+
+function renderLatencyWarn() {
+  const p = profile();
+  const now = metro.outputLatencyMs;
+  const drift = metro.unlocked && p.reported !== undefined && Math.abs(now - p.reported) >= DRIFT_WARN_MS;
+  const show = drift || outputChanged;
+  $('latencyWarn').hidden = !show;
+  if (!show) return;
+  $('latencyWarnText').textContent = drift
+    ? `The phone now reports ${now} ms audio delay, it was ${p.reported} ms when "${p.name}" was set. ClickSync adjusts for the reported part, but if the click feels off, recalibrate or pick the right headphone profile.`
+    : `The audio output changed (headphones connected or disconnected?). Check that "${p.name}" is the right headphone profile.`;
+}
+
+navigator.mediaDevices?.addEventListener?.('devicechange', () => {
+  outputChanged = true;
+  renderLatencyWarn();
+});
+
+$('latencyDismiss').addEventListener('click', () => {
+  // Accept the new situation as the baseline for this profile.
+  if (metro.unlocked) profile().reported = metro.outputLatencyMs;
+  outputChanged = false;
+  save();
+  renderLatencyWarn();
+});
+$('latencyRecal').addEventListener('click', () => {
+  renderSettings();
+  settings.showModal();
+  $('calibration').scrollIntoView({ block: 'start' });
+});
 
 profileSelect.addEventListener('change', () => {
   prefs.profile = Number(profileSelect.value);
@@ -680,7 +911,7 @@ $('tapPad').addEventListener('pointerdown', (e) => {
   if (!current().playing || !metro.playing) return endCalib('The click stopped, so calibration was cancelled.');
   const t = e.timeStamp - performance.now() + clock.now();
   let nearest = Infinity;
-  for (let k = nextTick(segments, t - 2500); k && k.time < t + 2500; k = nextTick(segments, k.time)) {
+  for (let k = nextTick(segments, t - 2500), n = 0; k && k.time < t + 2500 && n < 500; k = nextTick(segments, k.time), n++) {
     if (k.sub === 0 && Math.abs(k.time - t) < Math.abs(nearest - t)) nearest = k.time;
   }
   if (!Number.isFinite(nearest)) return;
@@ -702,6 +933,12 @@ listenName.addEventListener('input', () => {
   prefs.name = listenName.value.trim().slice(0, 20);
   save();
   sendInfo();
+});
+const hostName = $<HTMLInputElement>('hostName');
+hostName.addEventListener('input', () => {
+  prefs.name = hostName.value.trim().slice(0, 20);
+  save();
+  sendRoster();
 });
 
 // ---------- start ----------
