@@ -49,7 +49,7 @@ const prefs = {
   /** 0–1: how distinct accented beats (the 1) are. */
   accent: 0.5,
   /** Saved latency calibrations, one per pair of headphones. `reported` = browser-reported latency when calibrated. */
-  profiles: [{ name: 'Wired / speaker', latency: 0 }] as { name: string; latency: number; reported?: number }[],
+  profiles: [{ name: 'Wired / speaker', latency: 0 }] as { name: string; latency: number; reported?: number; calibrated?: boolean }[],
   profile: 0,
   flash: false,
   muted: false,
@@ -63,6 +63,9 @@ try {
 if (!['sharp', 'beep', 'wood', 'tick'].includes(prefs.sound)) prefs.sound = 'sharp';
 prefs.volume = clamp(Number(prefs.volume) || 0, 0, 3);
 prefs.accent = clamp(Number(prefs.accent ?? 0.5), 0, 1);
+prefs.subdivision = [1, 2, 3, 4].includes(Number(prefs.subdivision)) ? Number(prefs.subdivision) : 1;
+// Profiles from before the "calibrated" flag: a non-zero offset means someone set it.
+for (const p of prefs.profiles) p.calibrated ??= p.latency !== 0;
 const save = () => {
   try {
     localStorage.setItem('clicksync', JSON.stringify(prefs));
@@ -101,10 +104,24 @@ let roster: RosterEntry[] = []; // listener: who is in the session
 let locked = false;
 
 const stoppedGrid = (): Segment[] => [
-  { bpm: prefs.bpm, beatsPerBar: prefs.beatsPerBar, subdivision: prefs.subdivision, accents: prefs.accents, playing: false, start: 0 },
+  { bpm: prefs.bpm, beatsPerBar: prefs.beatsPerBar, subdivision: 1, accents: prefs.accents, playing: false, start: 0 },
 ];
 let segments = stoppedGrid();
 const current = () => segments[segments.length - 1];
+
+/**
+ * Subdivision is personal: the shared grid only fixes the beats, and each device fills them with
+ * its own subdivision. Every segment starts on a downbeat, so any subdivision lines up with it.
+ */
+const localGrid = () => segments.map((s) => (s.subdivision === prefs.subdivision ? s : { ...s, subdivision: prefs.subdivision }));
+const playGrid = () => metro.setSegments(localGrid());
+
+function setSubdivision(sub: number) {
+  prefs.subdivision = sub;
+  save();
+  playGrid();
+  render();
+}
 
 // ---------- controlling the grid (solo / host) ----------
 function change(patch: Partial<Settings> & { playing?: boolean }) {
@@ -119,11 +136,11 @@ function change(patch: Partial<Settings> & { playing?: boolean }) {
   next.start = cur.playing && next.playing ? changePoint(segments, t) : t;
   segments = withSegment(segments, next, now);
   rev++;
-  metro.setSegments(segments);
+  playGrid();
   net?.send({ t: 'state', rev, segments });
 
-  const { bpm, beatsPerBar, subdivision, accents } = next;
-  Object.assign(prefs, { bpm, beatsPerBar, subdivision, accents });
+  const { bpm, beatsPerBar, accents } = next;
+  Object.assign(prefs, { bpm, beatsPerBar, accents });
   save();
   render();
 }
@@ -223,7 +240,7 @@ function startListener(roomCode: string) {
   hostPath = undefined;
   clock.reset();
   segments = stoppedGrid();
-  metro.setSegments(segments);
+  playGrid();
   const room = joinRoom<Msg>(roomCode, {
     onJoin() {
       link = 'connected';
@@ -251,7 +268,7 @@ function startListener(roomCode: string) {
         segments = m.segments;
       }
       if (m.t === 'roster' && Array.isArray(m.players)) roster = m.players.slice(0, 50);
-      if (clock.synced) metro.setSegments(segments);
+      if (clock.synced) playGrid();
       render();
     },
     onError(type) {
@@ -283,7 +300,7 @@ function leave() {
     clock.reset();
     metro.muted.clear();
     segments = stoppedGrid();
-    metro.setSegments(segments);
+    playGrid();
     rev = 0;
   }
   role = 'solo';
@@ -314,7 +331,7 @@ function render() {
   $<HTMLInputElement>('bpmRange').value = String(s.bpm);
   $('beatsPerBar').textContent = String(s.beatsPerBar);
   document.querySelectorAll<HTMLElement>('[data-sub]').forEach((b) => {
-    b.setAttribute('aria-pressed', String(Number(b.dataset.sub) === s.subdivision));
+    b.setAttribute('aria-pressed', String(Number(b.dataset.sub) === prefs.subdivision));
   });
   const play = $('play');
   play.textContent = s.playing ? 'Stop' : 'Start';
@@ -363,6 +380,7 @@ function render() {
   // Audio stays "on" (with an inaudible keep-alive) for the whole session, not just while playing.
   metro.setActive(role !== 'solo' || s.playing);
   renderAudioHealth();
+  renderCalibWarn();
   renderLock();
   renderStatus();
   if (role === 'host') renderPlayers();
@@ -594,7 +612,7 @@ document.querySelectorAll<HTMLElement>('[data-beats]').forEach((b) =>
   b.addEventListener('click', () => change({ beatsPerBar: clamp(current().beatsPerBar + Number(b.dataset.beats), 1, 12) })),
 );
 document.querySelectorAll<HTMLElement>('[data-sub]').forEach((b) =>
-  b.addEventListener('click', () => change({ subdivision: Number(b.dataset.sub) })),
+  b.addEventListener('click', () => setSubdivision(Number(b.dataset.sub))),
 );
 
 // Beat dots: host cycles accent → normal → silent; listeners mute beats locally.
@@ -770,6 +788,7 @@ document.querySelectorAll<HTMLElement>('#theme [data-theme]').forEach((b) =>
 
 function setLatency(ms: number) {
   profile().latency = clamp(Math.round(ms), -100, 400);
+  profile().calibrated = true;
   if (metro.unlocked) profile().reported = metro.outputLatencyMs; // baseline for the drift warning
   applyProfile();
 }
@@ -780,7 +799,46 @@ function applyProfile() {
   save();
   renderSettings();
   renderLatencyWarn();
+  renderCalibWarn();
 }
+
+// ---------- calibration shortcut ----------
+// The headphone button in the header opens calibration directly. Until the current headphone
+// profile has been calibrated it carries a warning dot, and the main card shows a reminder.
+const CALIB_SNOOZE_KEY = 'calibSnoozed';
+function openCalibration() {
+  renderSettings();
+  if (!settings.open) settings.showModal();
+  $('headphones').scrollIntoView({ block: 'start' });
+  calibStart.focus({ preventScroll: true });
+}
+
+function renderCalibWarn() {
+  const needed = !profile().calibrated;
+  const btn = $('calibrate');
+  btn.classList.toggle('needs', needed);
+  btn.title = needed ? `"${profile().name}" is not calibrated yet – tap to calibrate` : 'Calibrate headphones';
+  btn.setAttribute('aria-label', needed ? 'Calibrate headphones (not calibrated yet)' : 'Calibrate headphones');
+  let snoozed = false;
+  try {
+    snoozed = sessionStorage.getItem(CALIB_SNOOZE_KEY) === profile().name;
+  } catch {}
+  // One alert at a time: the "delay changed" warning already points to recalibrating.
+  const show = needed && !snoozed && $('latencyWarn').hidden;
+  $('calibWarn').hidden = !show;
+  if (show) {
+    $('calibWarnText').textContent = `"${profile().name}" hasn't been calibrated yet, so your click may sound early or late compared to the others. Bluetooth headphones especially. It takes about 15 seconds.`;
+  }
+}
+
+$('calibrate').addEventListener('click', openCalibration);
+$('calibWarnGo').addEventListener('click', openCalibration);
+$('calibWarnLater').addEventListener('click', () => {
+  try {
+    sessionStorage.setItem(CALIB_SNOOZE_KEY, profile().name);
+  } catch {}
+  renderCalibWarn();
+});
 
 // ---------- latency drift warning ----------
 // The browser's reported output latency is already compensated automatically. But the manual offset
@@ -804,6 +862,7 @@ function renderLatencyWarn() {
   const drift = metro.unlocked && p.reported !== undefined && Math.abs(now - p.reported) >= DRIFT_WARN_MS;
   const show = drift || outputChanged;
   $('latencyWarn').hidden = !show;
+  renderCalibWarn();
   if (!show) return;
   $('latencyWarnText').textContent = drift
     ? `The phone now reports ${now} ms audio delay, it was ${p.reported} ms when "${p.name}" was set. ClickSync adjusts for the reported part, but if the click feels off, recalibrate or pick the right headphone profile.`
@@ -822,11 +881,7 @@ $('latencyDismiss').addEventListener('click', () => {
   save();
   renderLatencyWarn();
 });
-$('latencyRecal').addEventListener('click', () => {
-  renderSettings();
-  settings.showModal();
-  $('calibration').scrollIntoView({ block: 'start' });
-});
+$('latencyRecal').addEventListener('click', openCalibration);
 
 profileSelect.addEventListener('change', () => {
   prefs.profile = Number(profileSelect.value);
