@@ -593,6 +593,35 @@ input[type='range'] {
   text-transform: none;
 }
 
+/* Settings: headphone profile summary with a button into the calibration popup. */
+.calib-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 10px 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg);
+}
+
+.calib-summary > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.calib-summary strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calib-summary .needs {
+  color: var(--ok);
+  font-weight: 600;
+}
+
 .profile {
   display: flex;
   gap: 8px;
@@ -600,6 +629,19 @@ input[type='range'] {
 
 .profile select {
   padding-right: 8px;
+}
+
+/* Calibration popup: the profile picker gets its own row so names and offsets aren't cut off. */
+.profile.wrap {
+  flex-wrap: wrap;
+}
+
+.profile.wrap select {
+  flex-basis: 100%;
+}
+
+.profile.wrap .btn {
+  flex: 1;
 }
 
 .session-head {
