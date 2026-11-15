@@ -6,7 +6,7 @@ A metronome that keeps a whole group on the **same, tightly synced click**, each
 
 - **One host, many listeners.** The host connects to each listener over a WebRTC data channel (PeerJS). The free PeerJS cloud is used only to introduce the devices to each other.
 - **Clock sync, not "click now" messages.** Each listener estimates the host's clock with NTP-style ping/pong every 2 s. It uses the lowest-RTT samples and takes their median.
-- **Scheduled beat grid.** The host sends a short list of segments (`bpm`, meter, subdivision, accents, start time in host-clock ms). A change takes effect on the next downbeat at least 400 ms ahead, so every device switches on the same beat. Each device plays its own clicks with the Web Audio scheduler.
+- **Scheduled beat grid.** The host sends a short list of segments (`bpm`, meter, accents, start time in host-clock ms). Subdivision is not shared: each player picks their own, and it is laid over the shared beats on their device. A change takes effect on the next downbeat at least 400 ms ahead, so every device switches on the same beat. Each device plays its own clicks with the Web Audio scheduler.
 - **Resilient.** If the host drops, listeners keep playing the grid they already have, and they reconnect automatically. If the host reloads, it reclaims its session code.
 - **Latency calibration.** Each device has a latency-offset slider and a tap-along test. The output latency the browser reports is already taken into account. If that reported latency later changes by 20 ms or more, or the audio output device changes, the app shows a warning to re-check.
 - **Who's here.** The host sends a roster to every listener, so everyone can see who is in the session and who is muted.

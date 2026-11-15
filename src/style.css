@@ -157,6 +157,21 @@ input[type='range'] {
   height: 28px;
 }
 
+/* Small phones: four header buttons plus the status pill only fit without the wordmark. */
+@media (max-width: 440px) {
+  .bar {
+    gap: 6px;
+  }
+
+  .brand-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: inset(50%);
+  }
+}
+
 .layout {
   display: grid;
   gap: 16px;
@@ -214,6 +229,23 @@ input[type='range'] {
   border: 0;
   border-radius: 50%;
   background: var(--surface);
+}
+
+/* Warning dot while the current headphone profile has never been calibrated. */
+#calibrate {
+  position: relative;
+}
+
+#calibrate.needs::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--bg);
+  border-radius: 50%;
+  background: var(--ok);
 }
 
 #mute[aria-pressed='true'] {

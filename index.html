@@ -21,7 +21,7 @@
     <div id="flash" class="flash"></div>
 
     <header class="bar">
-      <h1 class="brand"><img src="./icon.svg" alt="" />ClickSync</h1>
+      <h1 class="brand"><img src="./icon.svg" alt="" /><span class="brand-name">ClickSync</span></h1>
       <span id="status" class="status" hidden></span>
       <button id="mute" class="icon-btn" aria-label="Mute click" aria-pressed="false" title="Mute (M)">
         <svg class="icon-on" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -29,6 +29,11 @@
         </svg>
         <svg class="icon-off" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M11 5 6 9H3v6h3l5 4z" /><path d="m16 9.5 5 5M21 9.5l-5 5" />
+        </svg>
+      </button>
+      <button id="calibrate" class="icon-btn" aria-label="Calibrate headphones" title="Calibrate headphones">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 15v-3a8 8 0 0 1 16 0v3" /><rect x="3" y="14" width="4" height="7" rx="1.5" /><rect x="17" y="14" width="4" height="7" rx="1.5" />
         </svg>
       </button>
       <button id="lock" class="icon-btn" aria-label="Lock screen" title="Lock the screen (pocket mode)">
@@ -49,7 +54,7 @@
           <span class="listen-icon" aria-hidden="true">🎧</span>
           <div>
             <strong>Listening to the host</strong>
-            <span>Tempo and start/stop are controlled by the host.</span>
+            <span>The host controls tempo and start/stop. Subdivision is up to you.</span>
           </div>
         </div>
 
@@ -66,6 +71,17 @@
           <div class="alert-actions">
             <button type="button" id="latencyRecal" class="btn">Recalibrate</button>
             <button type="button" id="latencyDismiss" class="btn ghost">Dismiss</button>
+          </div>
+        </div>
+
+        <div id="calibWarn" class="alert warn" role="status" hidden>
+          <div>
+            <strong>Headphones not calibrated</strong>
+            <span id="calibWarnText"></span>
+          </div>
+          <div class="alert-actions">
+            <button type="button" id="calibWarnGo" class="btn">Calibrate now</button>
+            <button type="button" id="calibWarnLater" class="btn ghost">Not now</button>
           </div>
         </div>
 
@@ -90,10 +106,10 @@
           <div class="field">
             <span class="label">Subdivision</span>
             <div id="subdivision" class="seg">
-              <button class="host-control" data-sub="1" aria-label="Quarter notes">♩</button>
-              <button class="host-control" data-sub="2" aria-label="Eighth notes">♫</button>
-              <button class="host-control" data-sub="3" aria-label="Triplets">3</button>
-              <button class="host-control" data-sub="4" aria-label="Sixteenth notes">♬</button>
+              <button data-sub="1" aria-label="Quarter notes">♩</button>
+              <button data-sub="2" aria-label="Eighth notes">♫</button>
+              <button data-sub="3" aria-label="Triplets">3</button>
+              <button data-sub="4" aria-label="Sixteenth notes">♬</button>
             </div>
           </div>
         </div>
@@ -196,16 +212,7 @@
           </p>
         </div>
 
-        <div class="field">
-          <span class="label">Theme</span>
-          <div id="theme" class="seg">
-            <button type="button" data-theme="system">System</button>
-            <button type="button" data-theme="light">Light</button>
-            <button type="button" data-theme="dark">Dark</button>
-          </div>
-        </div>
-
-        <div class="field">
+        <div id="headphones" class="field">
           <span class="label">Headphones</span>
           <div class="profile">
             <select id="profile" aria-label="Headphone profile"></select>
@@ -241,6 +248,15 @@
           <input id="flashToggle" type="checkbox" />
           Flash the screen on every beat
         </label>
+
+        <div class="field">
+          <span class="label">Theme</span>
+          <div id="theme" class="seg">
+            <button type="button" data-theme="system">System</button>
+            <button type="button" data-theme="light">Light</button>
+            <button type="button" data-theme="dark">Dark</button>
+          </div>
+        </div>
       </form>
     </dialog>
 
