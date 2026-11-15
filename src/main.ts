@@ -526,7 +526,7 @@ function setLocked(on: boolean) {
   locked = on;
   if (on) {
     metro.unlock();
-    for (const d of [settings, joinDialog]) if (d.open) d.close();
+    for (const d of [settings, calibDialog, joinDialog]) if (d.open) d.close();
     $('lockBeat').textContent = '–';
     $('lockBeat').className = 'lock-beat';
   }
@@ -647,6 +647,7 @@ function setMuted(m: boolean) {
   muteBtn.title = m ? 'Unmute (M)' : 'Mute (M)';
   $('mutedBadge').hidden = !m;
   if (settings.open) renderSettings();
+  if (calibDialog.open) renderCalibration();
   sendInfo();
   sendRoster();
 }
@@ -711,6 +712,7 @@ window.addEventListener('hashchange', () => {
 
 // ---------- settings ----------
 const settings = $<HTMLDialogElement>('settings');
+const calibDialog = $<HTMLDialogElement>('calibDialog');
 const volume = $<HTMLInputElement>('volume');
 const latency = $<HTMLInputElement>('latency');
 const profileSelect = $<HTMLSelectElement>('profile');
@@ -718,17 +720,17 @@ const flashToggle = $<HTMLInputElement>('flashToggle');
 const accentStrength = $<HTMLInputElement>('accentStrength');
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
+const ms = (v: number) => `${v > 0 ? '+' : ''}${v} ms`;
+
 function renderSettings() {
   volume.value = String(prefs.volume);
   $('volumeOut').textContent = pct(prefs.volume);
   accentStrength.value = String(prefs.accent);
   $('accentOut').textContent = pct(prefs.accent);
-  const ms = (v: number) => `${v > 0 ? '+' : ''}${v} ms`;
-  profileSelect.replaceChildren(...prefs.profiles.map((p, i) => new Option(`${p.name} (${ms(p.latency)})`, String(i))));
-  profileSelect.value = String(prefs.profile);
-  $<HTMLButtonElement>('deleteProfile').disabled = prefs.profiles.length < 2;
-  latency.value = String(profile().latency);
-  $('latencyOut').textContent = ms(profile().latency);
+  const p = profile();
+  $('calibSummaryName').textContent = p.name;
+  $('calibSummaryState').textContent = p.calibrated ? `Offset ${ms(p.latency)}` : 'Not calibrated yet';
+  $('calibSummaryState').classList.toggle('needs', !p.calibrated);
   flashToggle.checked = prefs.flash;
   document.querySelectorAll<HTMLElement>('[data-sound]').forEach((b) => {
     b.setAttribute('aria-pressed', String(b.dataset.sound === prefs.sound));
@@ -736,6 +738,15 @@ function renderSettings() {
   document.querySelectorAll<HTMLElement>('#theme [data-theme]').forEach((b) => {
     b.setAttribute('aria-pressed', String(b.dataset.theme === prefs.theme));
   });
+}
+
+/** The calibration popup: headphone profile, tap test and fine-tune slider. */
+function renderCalibration() {
+  profileSelect.replaceChildren(...prefs.profiles.map((p, i) => new Option(`${p.name} (${p.calibrated ? ms(p.latency) : 'not calibrated'})`, String(i))));
+  profileSelect.value = String(prefs.profile);
+  $<HTMLButtonElement>('deleteProfile').disabled = prefs.profiles.length < 2;
+  latency.value = String(profile().latency);
+  $('latencyOut').textContent = ms(profile().latency);
   $('calibMuted').hidden = !prefs.muted;
   calibStart.disabled = prefs.muted || calibLocked;
   $('reported').textContent = metro.unlocked ? `The browser reports ${metro.outputLatencyMs} ms, which is already included.` : '';
@@ -745,7 +756,7 @@ $('openSettings').addEventListener('click', () => {
   renderSettings();
   settings.showModal();
 });
-for (const d of [settings, joinDialog]) d.addEventListener('click', (e) => e.target === d && d.close());
+for (const d of [settings, calibDialog, joinDialog]) d.addEventListener('click', (e) => e.target === d && d.close());
 
 volume.addEventListener('input', () => {
   prefs.volume = Number(volume.value);
@@ -798,6 +809,7 @@ function applyProfile() {
   outputChanged = false; // picking or changing a profile acknowledges a device change
   save();
   renderSettings();
+  renderCalibration();
   renderLatencyWarn();
   renderCalibWarn();
 }
@@ -807,10 +819,10 @@ function applyProfile() {
 // profile has been calibrated it carries a warning dot, and the main card shows a reminder.
 const CALIB_SNOOZE_KEY = 'calibSnoozed';
 function openCalibration() {
-  renderSettings();
-  if (!settings.open) settings.showModal();
-  $('headphones').scrollIntoView({ block: 'start' });
-  calibStart.focus({ preventScroll: true });
+  if (settings.open) settings.close(); // one popup at a time
+  renderCalibration();
+  if (!calibDialog.open) calibDialog.showModal();
+  calibStart.focus();
 }
 
 function renderCalibWarn() {
@@ -827,11 +839,12 @@ function renderCalibWarn() {
   const show = needed && !snoozed && $('latencyWarn').hidden;
   $('calibWarn').hidden = !show;
   if (show) {
-    $('calibWarnText').textContent = `"${profile().name}" hasn't been calibrated yet, so your click may sound early or late compared to the others. Bluetooth headphones especially. It takes about 15 seconds.`;
+    $('calibWarnText').textContent = `"${profile().name}" isn't calibrated yet, so your click may be off from the others'. It takes about 15 seconds.`;
   }
 }
 
 $('calibrate').addEventListener('click', openCalibration);
+$('openCalib').addEventListener('click', openCalibration);
 $('calibWarnGo').addEventListener('click', openCalibration);
 $('calibWarnLater').addEventListener('click', () => {
   try {
@@ -913,6 +926,7 @@ const calibStart = $<HTMLButtonElement>('calibStart');
 const calibRun = $('calibRun');
 const calibProgress = $<HTMLProgressElement>('calibProgress');
 const tapResult = $('tapResult');
+tapResult.dataset.hint = tapResult.textContent ?? ''; // the instruction shown before a run
 let calibLock: ReturnType<typeof setTimeout> | undefined;
 let calibLocked = false;
 
@@ -933,11 +947,11 @@ function endCalib(message: string, done = false) {
   if (!done) return;
   calibStart.textContent = 'Calibrate again';
   calibLocked = true;
-  renderSettings();
+  renderCalibration();
   clearTimeout(calibLock);
   calibLock = setTimeout(() => {
     calibLocked = false;
-    renderSettings();
+    renderCalibration();
   }, RESTART_LOCK_MS);
 }
 
@@ -959,7 +973,7 @@ calibStart.addEventListener('click', () => {
   showCalib(true);
 });
 $('calibCancel').addEventListener('click', () => endCalib('Calibration cancelled.'));
-settings.addEventListener('close', () => calibRunning && endCalib(''));
+calibDialog.addEventListener('close', () => calibRunning && endCalib(tapResult.dataset.hint ?? ''));
 
 $('tapPad').addEventListener('pointerdown', (e) => {
   if (!calibRunning) return;

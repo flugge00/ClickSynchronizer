@@ -80,7 +80,7 @@
             <span id="calibWarnText"></span>
           </div>
           <div class="alert-actions">
-            <button type="button" id="calibWarnGo" class="btn">Calibrate now</button>
+            <button type="button" id="calibWarnGo" class="btn">Calibrate</button>
             <button type="button" id="calibWarnLater" class="btn ghost">Not now</button>
           </div>
         </div>
@@ -212,36 +212,15 @@
           </p>
         </div>
 
-        <div id="headphones" class="field">
+        <div class="field">
           <span class="label">Headphones</span>
-          <div class="profile">
-            <select id="profile" aria-label="Headphone profile"></select>
-            <button type="button" id="addProfile" class="btn">New</button>
-            <button type="button" id="deleteProfile" class="btn">Delete</button>
+          <div class="calib-summary">
+            <div>
+              <strong id="calibSummaryName"></strong>
+              <span id="calibSummaryState" class="muted small"></span>
+            </div>
+            <button type="button" id="openCalib" class="btn">Calibrate</button>
           </div>
-        </div>
-
-        <div id="calibration" class="field">
-          <span class="label">Latency offset <output id="latencyOut"></output></span>
-          <input id="latency" type="range" min="-100" max="400" step="1" />
-          <p class="muted small">
-            Plays this device earlier to make up for headphone delay, saved per headphone profile. Bluetooth adds 150–300 ms.
-            <span id="reported"></span>
-          </p>
-          <p id="calibMuted" class="calib-muted" role="alert" hidden>
-            <span><strong>You're muted.</strong> Unmute to hear the click you tap along to.</span>
-            <button type="button" id="calibUnmute" class="btn">Unmute</button>
-          </p>
-          <button type="button" id="calibStart" class="btn wide">Start calibration</button>
-          <div id="calibRun" class="calib-run" hidden>
-            <button type="button" id="tapPad" class="tap-pad">
-              <strong>Tap on every click</strong>
-              <span id="tapPadCount"></span>
-            </button>
-            <progress id="calibProgress" max="10" value="0" aria-label="Calibration progress"></progress>
-            <button type="button" id="calibCancel" class="btn ghost wide">Cancel</button>
-          </div>
-          <p id="tapResult" class="muted small" aria-live="polite"></p>
         </div>
 
         <label class="check">
@@ -256,6 +235,56 @@
             <button type="button" data-theme="light">Light</button>
             <button type="button" data-theme="dark">Dark</button>
           </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="calibDialog">
+      <form method="dialog">
+        <header class="dialog-head">
+          <h2>Calibrate headphones</h2>
+          <button class="icon-btn" aria-label="Close">✕</button>
+        </header>
+
+        <p class="muted small">
+          Headphones play the click a little late, Bluetooth by 150–300 ms. Calibrate each pair once so your click lines
+          up with everyone else's. The result is saved to the headphone profile below.
+        </p>
+
+        <div class="field">
+          <span class="label">Headphones</span>
+          <div class="profile wrap">
+            <select id="profile" aria-label="Headphone profile"></select>
+            <button type="button" id="addProfile" class="btn">New</button>
+            <button type="button" id="deleteProfile" class="btn">Delete</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="label">Tap test</span>
+          <p id="calibMuted" class="calib-muted" role="alert" hidden>
+            <span><strong>You're muted.</strong> Unmute to hear the click you tap along to.</span>
+            <button type="button" id="calibUnmute" class="btn">Unmute</button>
+          </p>
+          <button type="button" id="calibStart" class="btn primary wide">Start calibration</button>
+          <div id="calibRun" class="calib-run" hidden>
+            <button type="button" id="tapPad" class="tap-pad">
+              <strong>Tap on every click</strong>
+              <span id="tapPadCount"></span>
+            </button>
+            <progress id="calibProgress" max="10" value="0" aria-label="Calibration progress"></progress>
+            <button type="button" id="calibCancel" class="btn ghost wide">Cancel</button>
+          </div>
+          <p id="tapResult" class="muted small" aria-live="polite">Put your headphones on, press Start and tap the pad in time with the click.</p>
+        </div>
+
+        <div class="field">
+          <span class="label">Fine-tune <output id="latencyOut"></output></span>
+          <input id="latency" type="range" min="-100" max="400" step="1" aria-label="Latency offset" />
+          <p class="muted small">
+            Plays this device earlier to make up for the headphone delay. Adjust by ear if the click still feels off.
+            <span id="reported"></span>
+          </p>
         </div>
       </form>
     </dialog>
